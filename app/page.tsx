@@ -69,6 +69,10 @@ export default function Home() {
   })
   const [lastBinanceAggMovement, setLastBinanceAggMovement] = useState<{ timestamp: number, percentChange: number, direction: 'up' | 'down' } | null>(null)
   const [chainlinkRespondedTo, setChainlinkRespondedTo] = useState<number | null>(null)
+  const [orderbookStatus, setOrderbookStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting')
+  const [orderbookPrice, setOrderbookPrice] = useState<{ up: number | null, down: number | null }>({ up: null, down: null })
+  const [lastOrderbookUpdate, setLastOrderbookUpdate] = useState<number | null>(null)
+  const [orderbookMovement, setOrderbookMovement] = useState<string>('')
 
   useEffect(() => {
     // Connect to Binance Agg SSE
@@ -175,10 +179,45 @@ export default function Home() {
       setChainlinkStatus('disconnected')
     }
 
+    // Connect to Polymarket Orderbook SSE
+    const orderbookEventSource = new EventSource('/api/polymarket-orderbook')
+    
+    orderbookEventSource.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data)
+        
+        if (message.type === 'status') {
+          setOrderbookStatus(message.status)
+        } else if (message.type === 'price_change') {
+          const clientTimestamp = Date.now()
+          setLastOrderbookUpdate(clientTimestamp)
+          
+          // Determine if this is UP or DOWN token based on price
+          // Higher price (>0.5) is likely UP, lower is DOWN
+          const isUpToken = message.price > 0.5
+          
+          setOrderbookPrice(prev => ({
+            ...prev,
+            [isUpToken ? 'up' : 'down']: message.price
+          }))
+          
+          setOrderbookMovement(`${isUpToken ? 'UP' : 'DOWN'} @ ${message.price.toFixed(3)}`)
+        }
+      } catch (error) {
+        console.error('[Client] Polymarket Orderbook parse error:', error)
+      }
+    }
+
+    orderbookEventSource.onerror = () => {
+      console.error('[Client] Polymarket Orderbook stream error')
+      setOrderbookStatus('disconnected')
+    }
+
     // Cleanup
     return () => {
       binanceAggEventSource.close()
       chainlinkEventSource.close()
+      orderbookEventSource.close()
     }
   }, [])
 
@@ -409,7 +448,7 @@ export default function Home() {
         )}
 
         {/* Status Indicators */}
-        <div className="grid grid-cols-1 gap-4 mb-8 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 mb-8 md:grid-cols-4">
           <div className={`bg-gray-800 bg-opacity-50 backdrop-blur-lg rounded-lg p-6 border ${
             priceLeader === 'binance_agg' ? 'border-blue-500 shadow-lg shadow-blue-500/50' : 'border-gray-700'
           }`}>
