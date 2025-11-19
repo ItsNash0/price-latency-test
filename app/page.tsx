@@ -8,7 +8,17 @@ interface PricePoint {
   binancePrice: number | null
   binanceAggPrice: number | null
   chainlinkPrice: number | null
+  binanceChange: number | null
+  binanceAggChange: number | null
+  chainlinkChange: number | null
   time: string
+}
+
+interface MovementEvent {
+  source: 'binance' | 'binance_agg' | 'chainlink'
+  timestamp: number
+  percentChange: number
+  direction: 'up' | 'down'
 }
 
 const MAX_DATA_POINTS = 100
@@ -33,6 +43,21 @@ export default function Home() {
     binance_agg: null,
     chainlink: null
   })
+  const [previousPrices, setPreviousPrices] = useState<{ binance: number | null, binance_agg: number | null, chainlink: number | null }>({
+    binance: null,
+    binance_agg: null,
+    chainlink: null
+  })
+  const [movementEvents, setMovementEvents] = useState<MovementEvent[]>([])
+  const [movementDivergence, setMovementDivergence] = useState<{
+    binanceVsChainlink: number | null
+    binanceAggVsChainlink: number | null
+    leader: string | null
+  }>({
+    binanceVsChainlink: null,
+    binanceAggVsChainlink: null,
+    leader: null
+  })
 
   useEffect(() => {
     // Connect to Binance Trade SSE
@@ -56,13 +81,25 @@ export default function Home() {
           setLastBinanceUpdate(clientTimestamp)
           
           setCurrentBinancePrice(prevPrice => {
-            if (prevPrice && Math.abs((message.price - prevPrice) / prevPrice) > 0.0001) {
+            const percentChange = prevPrice ? ((message.price - prevPrice) / prevPrice) * 100 : 0
+            
+            // Track significant movements (> 0.01%)
+            if (prevPrice && Math.abs(percentChange) > 0.01) {
               setLastBinanceChange(clientTimestamp)
+              
+              // Record movement event
+              setMovementEvents(prev => [...prev.slice(-50), {
+                source: 'binance',
+                timestamp: clientTimestamp,
+                percentChange,
+                direction: percentChange > 0 ? 'up' : 'down'
+              }])
             }
+            
+            setPreviousPrices(prev => ({ ...prev, binance: prevPrice }))
+            updatePriceData('binancePrice', message.price, clientTimestamp, percentChange)
             return message.price
           })
-          
-          updatePriceData('binancePrice', message.price, clientTimestamp)
         }
       } catch (error) {
         console.error('[Client] Binance Trade parse error:', error)
@@ -91,13 +128,25 @@ export default function Home() {
           setLastBinanceAggUpdate(clientTimestamp)
           
           setCurrentBinanceAggPrice(prevPrice => {
-            if (prevPrice && Math.abs((message.price - prevPrice) / prevPrice) > 0.0001) {
+            const percentChange = prevPrice ? ((message.price - prevPrice) / prevPrice) * 100 : 0
+            
+            // Track significant movements (> 0.01%)
+            if (prevPrice && Math.abs(percentChange) > 0.01) {
               setLastBinanceAggChange(clientTimestamp)
+              
+              // Record movement event
+              setMovementEvents(prev => [...prev.slice(-50), {
+                source: 'binance_agg',
+                timestamp: clientTimestamp,
+                percentChange,
+                direction: percentChange > 0 ? 'up' : 'down'
+              }])
             }
+            
+            setPreviousPrices(prev => ({ ...prev, binance_agg: prevPrice }))
+            updatePriceData('binanceAggPrice', message.price, clientTimestamp, percentChange)
             return message.price
           })
-          
-          updatePriceData('binanceAggPrice', message.price, clientTimestamp)
         }
       } catch (error) {
         console.error('[Client] Binance Agg parse error:', error)
@@ -126,13 +175,25 @@ export default function Home() {
           setLastChainlinkUpdate(clientTimestamp)
           
           setCurrentChainlinkPrice(prevPrice => {
-            if (prevPrice && Math.abs((message.price - prevPrice) / prevPrice) > 0.0001) {
+            const percentChange = prevPrice ? ((message.price - prevPrice) / prevPrice) * 100 : 0
+            
+            // Track significant movements (> 0.01%)
+            if (prevPrice && Math.abs(percentChange) > 0.01) {
               setLastChainlinkChange(clientTimestamp)
+              
+              // Record movement event
+              setMovementEvents(prev => [...prev.slice(-50), {
+                source: 'chainlink',
+                timestamp: clientTimestamp,
+                percentChange,
+                direction: percentChange > 0 ? 'up' : 'down'
+              }])
             }
+            
+            setPreviousPrices(prev => ({ ...prev, chainlink: prevPrice }))
+            updatePriceData('chainlinkPrice', message.price, clientTimestamp, percentChange)
             return message.price
           })
-          
-          updatePriceData('chainlinkPrice', message.price, clientTimestamp)
         }
       } catch (error) {
         console.error('[Client] Chainlink parse error:', error)
@@ -152,7 +213,16 @@ export default function Home() {
     }
   }, [])
 
-  const updatePriceData = (field: 'binancePrice' | 'binanceAggPrice' | 'chainlinkPrice', price: number, timestamp: number) => {
+  const updatePriceData = (
+    field: 'binancePrice' | 'binanceAggPrice' | 'chainlinkPrice', 
+    price: number, 
+    timestamp: number,
+    percentChange: number
+  ) => {
+    const changeField = field === 'binancePrice' ? 'binanceChange' : 
+                        field === 'binanceAggPrice' ? 'binanceAggChange' : 
+                        'chainlinkChange'
+    
     setPriceData(prev => {
       const newData = [...prev]
       const lastPoint = newData[newData.length - 1]
@@ -163,6 +233,9 @@ export default function Home() {
           binancePrice: field === 'binancePrice' ? price : null,
           binanceAggPrice: field === 'binanceAggPrice' ? price : null,
           chainlinkPrice: field === 'chainlinkPrice' ? price : null,
+          binanceChange: field === 'binancePrice' ? percentChange : null,
+          binanceAggChange: field === 'binanceAggPrice' ? percentChange : null,
+          chainlinkChange: field === 'chainlinkPrice' ? percentChange : null,
           time: new Date(timestamp).toLocaleTimeString()
         }]
       }
@@ -173,17 +246,21 @@ export default function Home() {
           binancePrice: field === 'binancePrice' ? price : lastPoint.binancePrice,
           binanceAggPrice: field === 'binanceAggPrice' ? price : lastPoint.binanceAggPrice,
           chainlinkPrice: field === 'chainlinkPrice' ? price : lastPoint.chainlinkPrice,
+          binanceChange: field === 'binancePrice' ? percentChange : lastPoint.binanceChange,
+          binanceAggChange: field === 'binanceAggPrice' ? percentChange : lastPoint.binanceAggChange,
+          chainlinkChange: field === 'chainlinkPrice' ? percentChange : lastPoint.chainlinkChange,
           time: new Date(timestamp).toLocaleTimeString()
         })
       } else {
         lastPoint[field] = price
+        lastPoint[changeField] = percentChange
       }
       
       return newData.slice(-MAX_DATA_POINTS)
     })
   }
 
-  // Determine price leader
+  // Determine price leader and calculate movement divergence
   useEffect(() => {
     const changes = [
       { source: 'binance' as const, time: lastBinanceChange },
@@ -201,7 +278,45 @@ export default function Home() {
         setPriceLeader(sorted[0].source)
       }
     }
-  }, [lastBinanceChange, lastBinanceAggChange, lastChainlinkChange])
+    
+    // Calculate movement divergence (correlation analysis)
+    if (movementEvents.length >= 4) {
+      const recent = movementEvents.slice(-20) // Last 20 movements
+      
+      // Get Binance vs Chainlink movements
+      const binanceMovements = recent.filter(e => e.source === 'binance')
+      const chainlinkMovements = recent.filter(e => e.source === 'chainlink')
+      
+      if (binanceMovements.length > 0 && chainlinkMovements.length > 0) {
+        // Calculate average lead time
+        const leadTimes: number[] = []
+        
+        binanceMovements.forEach(bMove => {
+          // Find the next chainlink movement in the same direction
+          const nextChainlink = chainlinkMovements.find(cMove => 
+            cMove.timestamp > bMove.timestamp && 
+            cMove.direction === bMove.direction &&
+            cMove.timestamp - bMove.timestamp < 10000 // Within 10 seconds
+          )
+          
+          if (nextChainlink) {
+            leadTimes.push(nextChainlink.timestamp - bMove.timestamp)
+          }
+        })
+        
+        if (leadTimes.length > 0) {
+          const avgLeadTime = leadTimes.reduce((a, b) => a + b, 0) / leadTimes.length
+          const correlation = leadTimes.length / Math.min(binanceMovements.length, chainlinkMovements.length)
+          
+          setMovementDivergence({
+            binanceVsChainlink: avgLeadTime,
+            binanceAggVsChainlink: null, // Can add later
+            leader: avgLeadTime > 0 ? 'Binance leads' : 'Chainlink leads'
+          })
+        }
+      }
+    }
+  }, [lastBinanceChange, lastBinanceAggChange, lastChainlinkChange, movementEvents])
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -215,8 +330,8 @@ export default function Home() {
   const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
       return (
-        <div className="bg-gray-800 p-4 rounded-lg border border-gray-700">
-          <p className="text-white text-sm mb-2">{payload[0].payload.time}</p>
+        <div className="p-4 bg-gray-800 rounded-lg border border-gray-700">
+          <p className="mb-2 text-sm text-white">{payload[0].payload.time}</p>
           {payload.map((entry: any, index: number) => (
             <p key={index} style={{ color: entry.color }} className="text-sm">
               {entry.name}: ${entry.value?.toFixed(2) || 'N/A'}
@@ -229,38 +344,38 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-blue-900 to-gray-900 p-8">
-      <div className="max-w-7xl mx-auto">
-        <h1 className="text-4xl font-bold text-white mb-2 text-center">
+    <div className="p-8 min-h-screen bg-gradient-to-br from-gray-900 via-blue-900 to-gray-900">
+      <div className="mx-auto max-w-7xl">
+        <h1 className="mb-2 text-4xl font-bold text-center text-white">
           Bitcoin Price Comparison
         </h1>
-        <p className="text-gray-300 text-center mb-2">
+        <p className="mb-2 text-center text-gray-300">
           Server-side WebSocket connections for accurate latency measurements
         </p>
-        <p className="text-gray-400 text-center mb-8 text-sm">
+        <p className="mb-8 text-sm text-center text-gray-400">
           Deploy close to exchanges for lowest latency
         </p>
 
         {/* Status Indicators */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+        <div className="grid grid-cols-1 gap-4 mb-8 md:grid-cols-4">
           <div className={`bg-gray-800 bg-opacity-50 backdrop-blur-lg rounded-lg p-6 border ${
             priceLeader === 'binance' ? 'border-blue-500 shadow-lg shadow-blue-500/50' : 'border-gray-700'
           }`}>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-gray-400 text-sm flex items-center gap-2">
+            <div className="flex justify-between items-center mb-2">
+              <span className="flex gap-2 items-center text-sm text-gray-400">
                 Binance Trade
-                {priceLeader === 'binance' && <span className="text-blue-400 text-xs">⚡</span>}
+                {priceLeader === 'binance' && <span className="text-xs text-blue-400">⚡</span>}
               </span>
               <div className={`w-3 h-3 rounded-full ${getStatusColor(binanceStatus)}`}></div>
             </div>
             <p className="text-3xl font-bold text-white">
               ${currentBinancePrice?.toFixed(2) || '---'}
             </p>
-            <p className="text-gray-500 text-xs mt-1">
+            <p className="mt-1 text-xs text-gray-500">
               {lastBinanceUpdate ? `${Math.round((Date.now() - lastBinanceUpdate) / 1000)}s ago` : 'Connecting...'}
             </p>
             {serverLatency.binance !== null && (
-              <p className="text-green-400 text-xs mt-1">
+              <p className="mt-1 text-xs text-green-400">
                 Server→Client: {serverLatency.binance}ms
               </p>
             )}
@@ -269,21 +384,21 @@ export default function Home() {
           <div className={`bg-gray-800 bg-opacity-50 backdrop-blur-lg rounded-lg p-6 border ${
             priceLeader === 'binance_agg' ? 'border-cyan-500 shadow-lg shadow-cyan-500/50' : 'border-gray-700'
           }`}>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-gray-400 text-sm flex items-center gap-2">
+            <div className="flex justify-between items-center mb-2">
+              <span className="flex gap-2 items-center text-sm text-gray-400">
                 Binance Agg
-                {priceLeader === 'binance_agg' && <span className="text-cyan-400 text-xs">⚡</span>}
+                {priceLeader === 'binance_agg' && <span className="text-xs text-cyan-400">⚡</span>}
               </span>
               <div className={`w-3 h-3 rounded-full ${getStatusColor(binanceAggStatus)}`}></div>
             </div>
             <p className="text-3xl font-bold text-white">
               ${currentBinanceAggPrice?.toFixed(2) || '---'}
             </p>
-            <p className="text-gray-500 text-xs mt-1">
+            <p className="mt-1 text-xs text-gray-500">
               {lastBinanceAggUpdate ? `${Math.round((Date.now() - lastBinanceAggUpdate) / 1000)}s ago` : 'Connecting...'}
             </p>
             {serverLatency.binance_agg !== null && (
-              <p className="text-cyan-400 text-xs mt-1">
+              <p className="mt-1 text-xs text-cyan-400">
                 Server→Client: {serverLatency.binance_agg}ms
               </p>
             )}
@@ -292,29 +407,29 @@ export default function Home() {
           <div className={`bg-gray-800 bg-opacity-50 backdrop-blur-lg rounded-lg p-6 border ${
             priceLeader === 'chainlink' ? 'border-green-500 shadow-lg shadow-green-500/50' : 'border-gray-700'
           }`}>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-gray-400 text-sm flex items-center gap-2">
+            <div className="flex justify-between items-center mb-2">
+              <span className="flex gap-2 items-center text-sm text-gray-400">
                 Chainlink
-                {priceLeader === 'chainlink' && <span className="text-green-400 text-xs">⚡</span>}
+                {priceLeader === 'chainlink' && <span className="text-xs text-green-400">⚡</span>}
               </span>
               <div className={`w-3 h-3 rounded-full ${getStatusColor(chainlinkStatus)}`}></div>
             </div>
             <p className="text-3xl font-bold text-white">
               ${currentChainlinkPrice?.toFixed(2) || '---'}
             </p>
-            <p className="text-gray-500 text-xs mt-1">
+            <p className="mt-1 text-xs text-gray-500">
               {lastChainlinkUpdate ? `${Math.round((Date.now() - lastChainlinkUpdate) / 1000)}s ago` : 'Connecting...'}
             </p>
             {serverLatency.chainlink !== null && (
-              <p className="text-green-400 text-xs mt-1">
+              <p className="mt-1 text-xs text-green-400">
                 Server→Client: {serverLatency.chainlink}ms
               </p>
             )}
           </div>
 
-          <div className="bg-gray-800 bg-opacity-50 backdrop-blur-lg rounded-lg p-6 border border-gray-700">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-gray-400 text-sm">Leader</span>
+          <div className="p-6 bg-gray-800 bg-opacity-50 rounded-lg border border-gray-700 backdrop-blur-lg">
+            <div className="flex justify-between items-center mb-2">
+              <span className="text-sm text-gray-400">Leader</span>
             </div>
             <p className="text-2xl font-bold text-white">
               {priceLeader === 'binance' && '🔵 Binance'}
@@ -323,16 +438,73 @@ export default function Home() {
               {priceLeader === 'equal' && '⚪ Equal'}
               {!priceLeader && '⏳ Waiting...'}
             </p>
-            <p className="text-gray-500 text-xs mt-1">
+            <p className="mt-1 text-xs text-gray-500">
               Price discovery leader
             </p>
           </div>
         </div>
 
-        {/* Chart */}
-        <div className="bg-gray-800 bg-opacity-50 backdrop-blur-lg rounded-lg p-6 border border-gray-700">
-          <h2 className="text-xl font-semibold text-white mb-4">
-            Price Overlay - Last {priceData.length} Points
+        {/* Movement Correlation Chart */}
+        <div className="mb-8 p-6 bg-gray-800 bg-opacity-50 rounded-lg border border-purple-700 backdrop-blur-lg">
+          <h2 className="mb-4 text-xl font-semibold text-white">
+            Normalized Price Movements (% Change)
+          </h2>
+          <ResponsiveContainer width="100%" height={300}>
+            <LineChart data={priceData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+              <XAxis 
+                dataKey="time" 
+                stroke="#9CA3AF"
+                tick={{ fill: '#9CA3AF', fontSize: 12 }}
+              />
+              <YAxis 
+                stroke="#9CA3AF"
+                tick={{ fill: '#9CA3AF', fontSize: 12 }}
+                tickFormatter={(value) => `${value.toFixed(2)}%`}
+              />
+              <Tooltip content={<CustomTooltip />} />
+              <Legend 
+                wrapperStyle={{ color: '#fff' }}
+                iconType="line"
+              />
+              <Line 
+                type="monotone" 
+                dataKey="binanceChange" 
+                stroke="#3B82F6" 
+                name="Binance Δ%"
+                dot={false}
+                strokeWidth={2}
+                connectNulls
+              />
+              <Line 
+                type="monotone" 
+                dataKey="binanceAggChange" 
+                stroke="#06B6D4" 
+                name="Binance Agg Δ%"
+                dot={false}
+                strokeWidth={2}
+                connectNulls
+              />
+              <Line 
+                type="monotone" 
+                dataKey="chainlinkChange" 
+                stroke="#10B981" 
+                name="Chainlink Δ%"
+                dot={false}
+                strokeWidth={2}
+                connectNulls
+              />
+            </LineChart>
+          </ResponsiveContainer>
+          <p className="mt-2 text-sm text-gray-400">
+            📊 This shows normalized price movements. When Binance moves but Chainlink doesn't, you'll see divergence indicating Binance is leading.
+          </p>
+        </div>
+
+        {/* Absolute Price Chart */}
+        <div className="p-6 bg-gray-800 bg-opacity-50 rounded-lg border border-gray-700 backdrop-blur-lg">
+          <h2 className="mb-4 text-xl font-semibold text-white">
+            Absolute Prices - Last {priceData.length} Points
           </h2>
           <ResponsiveContainer width="100%" height={500}>
             <LineChart data={priceData}>
@@ -385,9 +557,9 @@ export default function Home() {
         </div>
 
         {/* Info Section */}
-        <div className="mt-8 bg-gray-800 bg-opacity-50 backdrop-blur-lg rounded-lg p-6 border border-gray-700">
-          <h3 className="text-lg font-semibold text-white mb-3">Architecture</h3>
-          <div className="text-sm text-gray-300 space-y-2">
+        <div className="p-6 mt-8 bg-gray-800 bg-opacity-50 rounded-lg border border-gray-700 backdrop-blur-lg">
+          <h3 className="mb-3 text-lg font-semibold text-white">Architecture</h3>
+          <div className="space-y-2 text-sm text-gray-300">
             <p>✅ <span className="text-blue-400">Server-side WebSocket connections</span> for accurate latency measurements</p>
             <p>✅ <span className="text-cyan-400">Server-Sent Events (SSE)</span> streams data to client</p>
             <p>✅ <span className="text-green-400">Deploy near exchanges</span> for lowest possible latency</p>
