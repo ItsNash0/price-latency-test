@@ -1,14 +1,18 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts'
 
 interface PricePoint {
   timestamp: number
   binanceAggPrice: number | null
   chainlinkPrice: number | null
+  polymarketUpPrice: number | null
+  polymarketDownPrice: number | null
   binanceAggChange: number | null
   chainlinkChange: number | null
+  polymarketUpChange: number | null
+  polymarketDownChange: number | null
   time: string
 }
 
@@ -73,6 +77,9 @@ export default function Home() {
   const [orderbookPrice, setOrderbookPrice] = useState<{ up: number | null, down: number | null }>({ up: null, down: null })
   const [lastOrderbookUpdate, setLastOrderbookUpdate] = useState<number | null>(null)
   const [orderbookMovement, setOrderbookMovement] = useState<string>('')
+  const [previousOrderbookPrices, setPreviousOrderbookPrices] = useState<{ up: number | null, down: number | null }>({ up: null, down: null })
+  const [marketOpenPrice, setMarketOpenPrice] = useState<number | null>(null)
+  const [marketInfo, setMarketInfo] = useState<{ eventStartTime: string, endDate: string } | null>(null)
 
   useEffect(() => {
     // Connect to Binance Agg SSE
@@ -188,20 +195,49 @@ export default function Home() {
         
         if (message.type === 'status') {
           setOrderbookStatus(message.status)
+          
+          // Store market open price for reference line
+          if (message.openPrice) {
+            setMarketOpenPrice(message.openPrice)
+            setMarketInfo({
+              eventStartTime: message.eventStartTime,
+              endDate: message.endDate
+            })
+            console.log('[Client] Market Open Price:', message.openPrice)
+          }
         } else if (message.type === 'price_change') {
           const clientTimestamp = Date.now()
           setLastOrderbookUpdate(clientTimestamp)
           
-          // Determine if this is UP or DOWN token based on price
-          // Higher price (>0.5) is likely UP, lower is DOWN
-          const isUpToken = message.price > 0.5
+          console.log('[Client] 📊 Orderbook price change:', message)
           
-          setOrderbookPrice(prev => ({
-            ...prev,
-            [isUpToken ? 'up' : 'down']: message.price
-          }))
+          // Update UP price if present
+          if (message.upPrice !== null && message.upPrice !== undefined) {
+            const prevPrice = previousOrderbookPrices.up
+            const percentChange = prevPrice ? ((message.upPrice - prevPrice) / prevPrice) * 100 : 0
+            
+            console.log(`[Client] 🟢 UP price: ${message.upPrice}, change: ${percentChange.toFixed(3)}%`)
+            
+            setOrderbookPrice(prev => ({ ...prev, up: message.upPrice }))
+            setPreviousOrderbookPrices(prev => ({ ...prev, up: prevPrice }))
+            updateOrderbookData('polymarketUpPrice', message.upPrice, clientTimestamp, percentChange)
+          }
           
-          setOrderbookMovement(`${isUpToken ? 'UP' : 'DOWN'} @ ${message.price.toFixed(3)}`)
+          // Update DOWN price if present
+          if (message.downPrice !== null && message.downPrice !== undefined) {
+            const prevPrice = previousOrderbookPrices.down
+            const percentChange = prevPrice ? ((message.downPrice - prevPrice) / prevPrice) * 100 : 0
+            
+            console.log(`[Client] 🔴 DOWN price: ${message.downPrice}, change: ${percentChange.toFixed(3)}%`)
+            
+            setOrderbookPrice(prev => ({ ...prev, down: message.downPrice }))
+            setPreviousOrderbookPrices(prev => ({ ...prev, down: prevPrice }))
+            updateOrderbookData('polymarketDownPrice', message.downPrice, clientTimestamp, percentChange)
+          }
+          
+          if (message.upPrice || message.downPrice) {
+            setOrderbookMovement(`UP: ${message.upPrice?.toFixed(3) || '---'} | DOWN: ${message.downPrice?.toFixed(3) || '---'}`)
+          }
         }
       } catch (error) {
         console.error('[Client] Polymarket Orderbook parse error:', error)
@@ -238,8 +274,12 @@ export default function Home() {
           timestamp,
           binanceAggPrice: field === 'binanceAggPrice' ? price : null,
           chainlinkPrice: field === 'chainlinkPrice' ? price : null,
+          polymarketUpPrice: null,
+          polymarketDownPrice: null,
           binanceAggChange: field === 'binanceAggPrice' ? percentChange : null,
           chainlinkChange: field === 'chainlinkPrice' ? percentChange : null,
+          polymarketUpChange: null,
+          polymarketDownChange: null,
           time: new Date(timestamp).toLocaleTimeString()
         }]
       }
@@ -249,8 +289,12 @@ export default function Home() {
           timestamp,
           binanceAggPrice: field === 'binanceAggPrice' ? price : lastPoint.binanceAggPrice,
           chainlinkPrice: field === 'chainlinkPrice' ? price : lastPoint.chainlinkPrice,
+          polymarketUpPrice: lastPoint.polymarketUpPrice,
+          polymarketDownPrice: lastPoint.polymarketDownPrice,
           binanceAggChange: field === 'binanceAggPrice' ? percentChange : lastPoint.binanceAggChange,
           chainlinkChange: field === 'chainlinkPrice' ? percentChange : lastPoint.chainlinkChange,
+          polymarketUpChange: lastPoint.polymarketUpChange,
+          polymarketDownChange: lastPoint.polymarketDownChange,
           time: new Date(timestamp).toLocaleTimeString()
         })
       } else {
@@ -259,6 +303,47 @@ export default function Home() {
       }
       
       return newData.slice(-MAX_DATA_POINTS)
+    })
+  }
+
+  const updateOrderbookData = (
+    field: 'polymarketUpPrice' | 'polymarketDownPrice',
+    price: number,
+    timestamp: number,
+    percentChange: number
+  ) => {
+    const changeField = field === 'polymarketUpPrice' ? 'polymarketUpChange' : 'polymarketDownChange'
+    
+    console.log(`[Client] 📈 Updating chart with ${field}: ${price}`)
+    
+    setPriceData(prev => {
+      const newData = [...prev]
+      const lastPoint = newData[newData.length - 1]
+      
+      if (newData.length === 0) {
+        const point = {
+          timestamp,
+          binanceAggPrice: null,
+          chainlinkPrice: null,
+          polymarketUpPrice: field === 'polymarketUpPrice' ? price : null,
+          polymarketDownPrice: field === 'polymarketDownPrice' ? price : null,
+          binanceAggChange: null,
+          chainlinkChange: null,
+          polymarketUpChange: field === 'polymarketUpPrice' ? percentChange : null,
+          polymarketDownChange: field === 'polymarketDownPrice' ? percentChange : null,
+          time: new Date(timestamp).toLocaleTimeString()
+        }
+        console.log('[Client] 📊 Created first orderbook point:', point)
+        return [point]
+      }
+      
+      // Always update the last point with orderbook data
+      lastPoint[field] = price
+      lastPoint[changeField] = percentChange
+      
+      const result = newData.slice(-MAX_DATA_POINTS)
+      console.log(`[Client] 📊 Updated chart. Total points: ${result.length}, Last point:`, result[result.length - 1])
+      return result
     })
   }
 
@@ -555,15 +640,23 @@ export default function Home() {
             </LineChart>
           </ResponsiveContainer>
           <p className="mt-2 text-sm text-gray-400">
-            📊 This shows normalized price movements. When Binance moves but Chainlink doesn't, you'll see divergence indicating Binance is leading.
+            📊 This shows normalized price movements showing which feed detects changes first.
           </p>
         </div>
 
-        {/* Absolute Price Chart */}
+        {/* Absolute Price Chart with Polymarket Probabilities */}
         <div className="p-6 bg-gray-800 bg-opacity-50 rounded-lg border border-gray-700 backdrop-blur-lg">
-          <h2 className="mb-4 text-xl font-semibold text-white">
-            Absolute Prices - Last {priceData.length} Points
-          </h2>
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-xl font-semibold text-white">
+              Absolute Prices + Polymarket Probabilities
+            </h2>
+            {marketOpenPrice && (
+              <div className="text-right">
+                <p className="text-xs text-gray-400">Market Open Price</p>
+                <p className="text-lg font-bold text-yellow-400">${marketOpenPrice.toFixed(2)}</p>
+              </div>
+            )}
+          </div>
           <ResponsiveContainer width="100%" height={500}>
             <LineChart data={priceData}>
               <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
@@ -573,17 +666,37 @@ export default function Home() {
                 tick={{ fill: '#9CA3AF', fontSize: 12 }}
               />
               <YAxis 
+                yAxisId="left"
                 stroke="#9CA3AF"
                 tick={{ fill: '#9CA3AF', fontSize: 12 }}
                 domain={['auto', 'auto']}
                 tickFormatter={(value) => `$${value.toFixed(0)}`}
               />
+              <YAxis 
+                yAxisId="right"
+                orientation="right"
+                stroke="#A855F7"
+                tick={{ fill: '#A855F7', fontSize: 12 }}
+                domain={[0, 1]}
+                tickFormatter={(value) => `${(value * 100).toFixed(0)}%`}
+              />
+              {marketOpenPrice && (
+                <ReferenceLine 
+                  yAxisId="left"
+                  y={marketOpenPrice} 
+                  stroke="#EAB308" 
+                  strokeWidth={2} 
+                  strokeDasharray="10 5"
+                  label={{ value: `Open: $${marketOpenPrice.toFixed(0)}`, position: 'right', fill: '#EAB308', fontSize: 12 }}
+                />
+              )}
               <Tooltip content={<CustomTooltip />} />
               <Legend 
                 wrapperStyle={{ color: '#fff' }}
                 iconType="line"
               />
               <Line 
+                yAxisId="left"
                 type="monotone" 
                 dataKey="binanceAggPrice" 
                 stroke="#3B82F6" 
@@ -593,6 +706,7 @@ export default function Home() {
                 connectNulls
               />
               <Line 
+                yAxisId="left"
                 type="monotone" 
                 dataKey="chainlinkPrice" 
                 stroke="#10B981" 
@@ -601,8 +715,34 @@ export default function Home() {
                 strokeWidth={2}
                 connectNulls
               />
+              <Line 
+                yAxisId="right"
+                type="monotone" 
+                dataKey="polymarketUpPrice" 
+                stroke="#22C55E" 
+                name="PM UP"
+                dot={false}
+                strokeWidth={2}
+                connectNulls
+                strokeDasharray="5 5"
+              />
+              <Line 
+                yAxisId="right"
+                type="monotone" 
+                dataKey="polymarketDownPrice" 
+                stroke="#EF4444" 
+                name="PM DOWN"
+                dot={false}
+                strokeWidth={2}
+                connectNulls
+                strokeDasharray="5 5"
+              />
             </LineChart>
           </ResponsiveContainer>
+          <p className="mt-2 text-sm text-gray-400">
+            📊 Left axis: Spot/Oracle prices in USD. Right axis: Polymarket probabilities (0-1). 
+            <span className="text-yellow-400">Yellow dashed line</span> = Market open price reference.
+          </p>
         </div>
 
         {/* Trading Signal Analysis */}
