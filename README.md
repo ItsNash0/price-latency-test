@@ -32,23 +32,42 @@ The server streams price data to the client using SSE, which:
 
 ## 🚀 Getting Started
 
-### Install Dependencies
+### Local Development
+
+#### Install Dependencies
 ```bash
 npm install
 ```
 
-### Run Development Server
+#### Run Development Server
 ```bash
 npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000)
 
-### Build for Production
+#### Build for Production
 ```bash
 npm run build
 npm start
 ```
+
+### Deploy to Coolify
+
+[![Deploy to Coolify](https://img.shields.io/badge/Deploy%20to-Coolify-6C47FF?style=for-the-badge)](DEPLOYMENT.md)
+
+This project is fully compatible with Coolify and Nixpacks. See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed instructions.
+
+**Quick Deploy:**
+1. Connect your Coolify instance to this GitHub repository
+2. Coolify auto-detects Next.js and uses the included `nixpacks.toml`
+3. Deploy! No additional configuration needed.
+
+The project includes:
+- ✅ `nixpacks.toml` for automated build configuration
+- ✅ Standalone Next.js output for optimal container performance
+- ✅ Dynamic port binding for Coolify compatibility
+- ✅ Automatic WebSocket connection management
 
 ## 📊 Features
 
