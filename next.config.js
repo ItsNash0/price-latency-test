@@ -1,13 +1,12 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
 	reactStrictMode: true,
-	// Ensure standalone output for better Docker/Nixpacks compatibility
-	output: "standalone",
-	// Allow WebSocket connections in production
-	experimental: {
-		serverActions: {
-			allowedOrigins: ["*"],
-		},
+	// WebSocket library needs to be external for server components
+	webpack: (config, { isServer }) => {
+		if (isServer) {
+			config.externals.push("ws")
+		}
+		return config
 	},
 }
 

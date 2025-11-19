@@ -18,12 +18,16 @@ export async function GET(request: NextRequest) {
 
 				ws.on("open", () => {
 					console.log("[Server] Binance Trade WebSocket connected")
-					const data = JSON.stringify({
-						type: "status",
-						status: "connected",
-						source: "binance_trade",
-					})
-					controller.enqueue(encoder.encode(`data: ${data}\n\n`))
+					try {
+						const data = JSON.stringify({
+							type: "status",
+							status: "connected",
+							source: "binance_trade",
+						})
+						controller.enqueue(encoder.encode(`data: ${data}\n\n`))
+					} catch (error) {
+						// Controller already closed, ignore
+					}
 				})
 
 				ws.on("message", (data: WebSocket.Data) => {
@@ -40,9 +44,14 @@ export async function GET(request: NextRequest) {
 							originalData: parsed,
 						})
 
-						controller.enqueue(
-							encoder.encode(`data: ${message}\n\n`)
-						)
+						try {
+							controller.enqueue(
+								encoder.encode(`data: ${message}\n\n`)
+							)
+						} catch (enqueueError) {
+							// Controller closed, stop processing
+							if (ws) ws.close()
+						}
 					} catch (error) {
 						console.error(
 							"[Server] Binance Trade parse error:",
@@ -56,25 +65,35 @@ export async function GET(request: NextRequest) {
 						"[Server] Binance Trade WebSocket error:",
 						error
 					)
-					const data = JSON.stringify({
-						type: "status",
-						status: "error",
-						source: "binance_trade",
-					})
-					controller.enqueue(encoder.encode(`data: ${data}\n\n`))
+					try {
+						const data = JSON.stringify({
+							type: "status",
+							status: "error",
+							source: "binance_trade",
+						})
+						controller.enqueue(encoder.encode(`data: ${data}\n\n`))
+					} catch (enqueueError) {
+						// Controller already closed, ignore
+					}
 				})
 
 				ws.on("close", () => {
-					console.log(
-						"[Server] Binance Trade WebSocket closed, reconnecting..."
-					)
-					const data = JSON.stringify({
-						type: "status",
-						status: "disconnected",
-						source: "binance_trade",
-					})
-					controller.enqueue(encoder.encode(`data: ${data}\n\n`))
-					setTimeout(connect, 3000)
+					console.log("[Server] Binance Trade WebSocket closed")
+					try {
+						const data = JSON.stringify({
+							type: "status",
+							status: "disconnected",
+							source: "binance_trade",
+						})
+						controller.enqueue(encoder.encode(`data: ${data}\n\n`))
+						// Only reconnect if client is still connected
+						setTimeout(connect, 3000)
+					} catch (enqueueError) {
+						// Controller closed (client disconnected), don't reconnect
+						console.log(
+							"[Server] Client disconnected, not reconnecting"
+						)
+					}
 				})
 			}
 

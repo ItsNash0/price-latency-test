@@ -32,12 +32,16 @@ export async function GET(request: NextRequest) {
 
 					ws?.send(JSON.stringify(subscribeMessage))
 
-					const data = JSON.stringify({
-						type: "status",
-						status: "connected",
-						source: "chainlink",
-					})
-					controller.enqueue(encoder.encode(`data: ${data}\n\n`))
+					try {
+						const data = JSON.stringify({
+							type: "status",
+							status: "connected",
+							source: "chainlink",
+						})
+						controller.enqueue(encoder.encode(`data: ${data}\n\n`))
+					} catch (error) {
+						// Controller already closed, ignore
+					}
 
 					// Start PING interval
 					pingInterval = setInterval(() => {
@@ -49,7 +53,13 @@ export async function GET(request: NextRequest) {
 
 				ws.on("message", (data: WebSocket.Data) => {
 					try {
-						const parsed = JSON.parse(data.toString())
+						// Convert to string and validate it's not empty
+						const dataString = data.toString().trim()
+						if (!dataString) {
+							return // Skip empty messages
+						}
+
+						const parsed = JSON.parse(dataString)
 
 						// Handle PONG
 						if (parsed.type === "pong") {
@@ -83,41 +93,63 @@ export async function GET(request: NextRequest) {
 									originalData: parsed,
 								})
 
-								controller.enqueue(
-									encoder.encode(`data: ${message}\n\n`)
-								)
+								try {
+									controller.enqueue(
+										encoder.encode(`data: ${message}\n\n`)
+									)
+								} catch (enqueueError) {
+									// Controller closed, stop processing
+									if (ws) ws.close()
+									if (pingInterval)
+										clearInterval(pingInterval)
+								}
 							}
 						}
 					} catch (error) {
-						console.error("[Server] Chainlink parse error:", error)
+						// Only log non-JSON parsing errors
+						if (error instanceof SyntaxError) {
+							// Incomplete or malformed JSON, skip silently
+							return
+						}
+						console.error("[Server] Chainlink error:", error)
 					}
 				})
 
 				ws.on("error", (error) => {
 					console.error("[Server] Polymarket WebSocket error:", error)
-					const data = JSON.stringify({
-						type: "status",
-						status: "error",
-						source: "chainlink",
-					})
-					controller.enqueue(encoder.encode(`data: ${data}\n\n`))
+					try {
+						const data = JSON.stringify({
+							type: "status",
+							status: "error",
+							source: "chainlink",
+						})
+						controller.enqueue(encoder.encode(`data: ${data}\n\n`))
+					} catch (enqueueError) {
+						// Controller already closed, ignore
+					}
 				})
 
 				ws.on("close", () => {
-					console.log(
-						"[Server] Polymarket WebSocket closed, reconnecting..."
-					)
+					console.log("[Server] Polymarket WebSocket closed")
 					if (pingInterval) {
 						clearInterval(pingInterval)
 						pingInterval = null
 					}
-					const data = JSON.stringify({
-						type: "status",
-						status: "disconnected",
-						source: "chainlink",
-					})
-					controller.enqueue(encoder.encode(`data: ${data}\n\n`))
-					setTimeout(connect, 3000)
+					try {
+						const data = JSON.stringify({
+							type: "status",
+							status: "disconnected",
+							source: "chainlink",
+						})
+						controller.enqueue(encoder.encode(`data: ${data}\n\n`))
+						// Only reconnect if client is still connected
+						setTimeout(connect, 3000)
+					} catch (enqueueError) {
+						// Controller closed (client disconnected), don't reconnect
+						console.log(
+							"[Server] Client disconnected, not reconnecting"
+						)
+					}
 				})
 			}
 
