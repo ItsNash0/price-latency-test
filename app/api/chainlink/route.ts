@@ -11,12 +11,15 @@ export async function GET(request: NextRequest) {
 		start(controller) {
 			let ws: WebSocket | null = null
 			let pingInterval: NodeJS.Timeout | null = null
+			let reconnectAttempts = 0
+			const MAX_RECONNECT_DELAY = 30000 // 30 seconds max
 
 			const connect = () => {
 				ws = new WebSocket("wss://ws-live-data.polymarket.com")
 
 				ws.on("open", () => {
 					console.log("[Server] Polymarket WebSocket connected")
+					reconnectAttempts = 0 // Reset on successful connection
 
 					// Subscribe to BTC/USD chainlink prices
 					const subscribeMessage = {
@@ -142,8 +145,17 @@ export async function GET(request: NextRequest) {
 							source: "chainlink",
 						})
 						controller.enqueue(encoder.encode(`data: ${data}\n\n`))
-						// Only reconnect if client is still connected
-						setTimeout(connect, 3000)
+
+						// Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s (max)
+						reconnectAttempts++
+						const delay = Math.min(
+							1000 * Math.pow(2, reconnectAttempts - 1),
+							MAX_RECONNECT_DELAY
+						)
+						console.log(
+							`[Server] Reconnecting Polymarket in ${delay}ms (attempt ${reconnectAttempts})`
+						)
+						setTimeout(connect, delay)
 					} catch (enqueueError) {
 						// Controller closed (client disconnected), don't reconnect
 						console.log(

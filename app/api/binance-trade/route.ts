@@ -10,6 +10,8 @@ export async function GET(request: NextRequest) {
 	const stream = new ReadableStream({
 		start(controller) {
 			let ws: WebSocket | null = null
+			let reconnectAttempts = 0
+			const MAX_RECONNECT_DELAY = 30000 // 30 seconds max
 
 			const connect = () => {
 				ws = new WebSocket(
@@ -18,6 +20,7 @@ export async function GET(request: NextRequest) {
 
 				ws.on("open", () => {
 					console.log("[Server] Binance Trade WebSocket connected")
+					reconnectAttempts = 0 // Reset on successful connection
 					try {
 						const data = JSON.stringify({
 							type: "status",
@@ -86,8 +89,17 @@ export async function GET(request: NextRequest) {
 							source: "binance_trade",
 						})
 						controller.enqueue(encoder.encode(`data: ${data}\n\n`))
-						// Only reconnect if client is still connected
-						setTimeout(connect, 3000)
+
+						// Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s (max)
+						reconnectAttempts++
+						const delay = Math.min(
+							1000 * Math.pow(2, reconnectAttempts - 1),
+							MAX_RECONNECT_DELAY
+						)
+						console.log(
+							`[Server] Reconnecting Binance Trade in ${delay}ms (attempt ${reconnectAttempts})`
+						)
+						setTimeout(connect, delay)
 					} catch (enqueueError) {
 						// Controller closed (client disconnected), don't reconnect
 						console.log(
