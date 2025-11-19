@@ -1,59 +1,145 @@
-# Bitcoin Price Comparison - Binance vs Chainlink
+# Bitcoin Price Latency Test
 
-Real-time Bitcoin price comparison showing data from both Binance WebSocket and Polymarket's Chainlink oracle feed.
+Real-time Bitcoin price comparison showing which data source reflects price changes first: Binance Trade, Binance Aggregated Trades, or Polymarket's Chainlink oracle feed.
 
-## Features
+## 🎯 Purpose
 
-- **Real-time Binance Prices**: Direct WebSocket connection to Binance for live BTC/USDT trade prices
-- **Chainlink Oracle Data**: BTC/USD prices from Polymarket's Chainlink feed via their real-time-data-client
-- **Overlapping Charts**: Visual comparison of both price feeds on the same timeline
-- **Divergence Tracking**: Real-time calculation of price differences between the two sources
-- **Auto-reconnection**: Automatic reconnection if connections drop
+Analyze price discovery and latency by comparing:
+- **Binance Individual Trades** - Granular trade-by-trade data
+- **Binance Aggregated Trades** - Combined trades for charting
+- **Chainlink Oracle** (via Polymarket) - Decentralized price feed
 
-## Getting Started
+## 🏗️ Architecture
 
-1. Install dependencies:
+### Server-Side WebSocket Connections
+All WebSocket connections are handled **server-side** via Next.js API routes:
+- `/api/binance-trade` - Connects to Binance trade stream
+- `/api/binance-agg` - Connects to Binance aggregated trade stream  
+- `/api/chainlink` - Connects to Polymarket's Chainlink feed
+
+### Server-Sent Events (SSE)
+The server streams price data to the client using SSE, which:
+- ✅ Provides accurate server-side timestamps
+- ✅ Enables deployment close to exchange servers for minimal latency
+- ✅ Measures true network latency (server→client)
+- ✅ Auto-reconnects on connection loss
+
+### Benefits
+1. **Accurate Latency Measurements** - Server timestamps eliminate client-side delays
+2. **Geographic Optimization** - Deploy near exchanges (e.g., AWS Singapore for Binance)
+3. **Lower Infrastructure Load** - Server manages persistent WebSocket connections
+4. **Better Reliability** - Server-side reconnection logic
+
+## 🚀 Getting Started
+
+### Install Dependencies
 ```bash
 npm install
 ```
 
-2. Run the development server:
+### Run Development Server
 ```bash
 npm run dev
 ```
 
-3. Open [http://localhost:3000](http://localhost:3000) in your browser
+Open [http://localhost:3000](http://localhost:3000)
 
-## How It Works
+### Build for Production
+```bash
+npm run build
+npm start
+```
 
-### Binance WebSocket
-Connects directly to Binance's trade stream for BTC/USDT:
-- Endpoint: `wss://stream.binance.com:9443/ws/btcusdt@trade`
-- Updates on every trade execution
-- Provides spot market prices
+## 📊 Features
 
-### Polymarket Chainlink Feed
-Uses the `@polymarket/real-time-data-client` to subscribe to:
-- Topic: `crypto_prices_chainlink`
-- Symbol: `BTC`
-- Provides oracle-aggregated prices
+### Real-Time Price Feeds
+- 🔵 **Binance Trade** - Every individual trade
+- 🔷 **Binance Agg** - Aggregated trades
+- 🟢 **Chainlink** - Oracle-aggregated price
 
-### Divergence Analysis
-The app calculates:
-- Absolute price difference in USD
-- Percentage difference
-- Color-coded divergence indicator (green < 0.1%, yellow < 0.5%, red > 0.5%)
+### Leader Detection
+- ⚡ Highlights which source changes price first
+- 📈 Tracks significant price movements (>0.01%)
+- ⏱️ Shows millisecond-level timing differences
 
-## Tech Stack
+### Latency Monitoring
+- Server→Client latency displayed for each feed
+- Real-time connection status indicators
+- Auto-reconnection on disconnects
 
-- **Next.js 14** - React framework
+### Visual Analysis
+- Overlapping price charts for direct comparison
+- Color-coded price sources
+- Interactive tooltips with precise values
+
+## 🌍 Deployment Recommendations
+
+### For Lowest Latency
+
+1. **Binance** - Deploy in Singapore region
+   - Binance servers are primarily in Singapore
+   - AWS: `ap-southeast-1`
+   - Vercel: Singapore region
+
+2. **Polymarket/Chainlink** - Deploy in US East
+   - Polymarket websocket: `wss://ws-live-data.polymarket.com`
+   - AWS: `us-east-1`
+   - Vercel: Washington D.C region
+
+### Deployment Platforms
+- **Vercel** - Easy deployment with geographic edge functions
+- **AWS ECS/Lambda** - Full control over server location
+- **Railway** - Simple deployment with region selection
+
+## 📈 What You'll Discover
+
+This tool helps answer:
+- Which exchange/oracle updates prices first?
+- How much latency exists between sources?
+- Are aggregated trades faster than individual trades?
+- How does Chainlink oracle lag compare to spot exchanges?
+
+## 🛠️ Technical Stack
+
+- **Next.js 14** - React framework with API routes
 - **TypeScript** - Type safety
 - **Tailwind CSS** - Styling
 - **Recharts** - Data visualization
-- **WebSocket** - Real-time data connections
-- **Polymarket Real-Time Data Client** - Chainlink price feed
+- **ws** - Server-side WebSocket library
+- **Server-Sent Events** - Real-time data streaming
 
-## License
+## 📝 API Routes
+
+### GET /api/binance-trade
+Streams Binance individual trades via SSE
+```
+data: {"type":"price","source":"binance_trade","price":92589.50,"serverTimestamp":1700000000000}
+```
+
+### GET /api/binance-agg
+Streams Binance aggregated trades via SSE
+```
+data: {"type":"price","source":"binance_agg","price":92589.51,"serverTimestamp":1700000000000}
+```
+
+### GET /api/chainlink
+Streams Polymarket Chainlink BTC/USD prices via SSE
+```
+data: {"type":"price","source":"chainlink","price":92589.45,"serverTimestamp":1700000000000}
+```
+
+## 🔧 Configuration
+
+The server automatically:
+- Reconnects on disconnection
+- Sends PING/PONG for Polymarket keepalive
+- Filters significant price changes
+- Manages multiple concurrent client connections
+
+## 📄 License
 
 MIT
 
+## 🤝 Contributing
+
+Contributions welcome! This is a research tool for understanding cryptocurrency price discovery mechanisms.
