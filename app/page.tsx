@@ -21,6 +21,15 @@ interface MovementEvent {
   direction: 'up' | 'down'
 }
 
+interface TradingSignal {
+  action: 'LONG' | 'SHORT' | 'NEUTRAL'
+  strength: number // 0-100
+  reason: string
+  timestamp: number
+  binanceChange: number
+  expectedChainlinkMove: boolean
+}
+
 const MAX_DATA_POINTS = 100
 
 export default function Home() {
@@ -58,6 +67,16 @@ export default function Home() {
     binanceAggVsChainlink: null,
     leader: null
   })
+  const [tradingSignal, setTradingSignal] = useState<TradingSignal>({
+    action: 'NEUTRAL',
+    strength: 0,
+    reason: 'Waiting for data...',
+    timestamp: Date.now(),
+    binanceChange: 0,
+    expectedChainlinkMove: false
+  })
+  const [lastBinanceMovement, setLastBinanceMovement] = useState<{ timestamp: number, percentChange: number, direction: 'up' | 'down' } | null>(null)
+  const [chainlinkRespondedTo, setChainlinkRespondedTo] = useState<number | null>(null)
 
   useEffect(() => {
     // Connect to Binance Trade SSE
@@ -94,6 +113,13 @@ export default function Home() {
                 percentChange,
                 direction: percentChange > 0 ? 'up' : 'down'
               }])
+              
+              // Record as potential lead movement
+              setLastBinanceMovement({
+                timestamp: clientTimestamp,
+                percentChange,
+                direction: percentChange > 0 ? 'up' : 'down'
+              })
             }
             
             setPreviousPrices(prev => ({ ...prev, binance: prevPrice }))
@@ -188,6 +214,9 @@ export default function Home() {
                 percentChange,
                 direction: percentChange > 0 ? 'up' : 'down'
               }])
+              
+              // Mark that Chainlink responded to Binance movement
+              setChainlinkRespondedTo(clientTimestamp)
             }
             
             setPreviousPrices(prev => ({ ...prev, chainlink: prevPrice }))
@@ -316,7 +345,51 @@ export default function Home() {
         }
       }
     }
-  }, [lastBinanceChange, lastBinanceAggChange, lastChainlinkChange, movementEvents])
+    
+    // Generate trading signal based on Binance leading Polymarket
+    if (lastBinanceMovement) {
+      const timeSinceMove = Date.now() - lastBinanceMovement.timestamp
+      const hasChainlinkResponded = chainlinkRespondedTo && chainlinkRespondedTo > lastBinanceMovement.timestamp
+      
+      // Signal is valid for 5 seconds or until Chainlink responds
+      if (timeSinceMove < 5000 && !hasChainlinkResponded) {
+        const absChange = Math.abs(lastBinanceMovement.percentChange)
+        
+        // Calculate signal strength (0-100)
+        // 0.01% change = 10 strength, 0.1% = 50, 0.5% = 100
+        const strength = Math.min(100, Math.round(absChange * 200))
+        
+        setTradingSignal({
+          action: lastBinanceMovement.direction === 'up' ? 'LONG' : 'SHORT',
+          strength,
+          reason: `Binance ${lastBinanceMovement.direction === 'up' ? 'rose' : 'dropped'} ${absChange.toFixed(3)}% - Chainlink hasn't responded yet`,
+          timestamp: lastBinanceMovement.timestamp,
+          binanceChange: lastBinanceMovement.percentChange,
+          expectedChainlinkMove: true
+        })
+      } else if (hasChainlinkResponded) {
+        // Signal expired - Chainlink caught up
+        setTradingSignal({
+          action: 'NEUTRAL',
+          strength: 0,
+          reason: 'Markets aligned - no arbitrage opportunity',
+          timestamp: Date.now(),
+          binanceChange: 0,
+          expectedChainlinkMove: false
+        })
+      } else if (timeSinceMove >= 5000) {
+        // Signal expired - timeout
+        setTradingSignal({
+          action: 'NEUTRAL',
+          strength: 0,
+          reason: 'Signal expired - Chainlink may not follow',
+          timestamp: Date.now(),
+          binanceChange: 0,
+          expectedChainlinkMove: false
+        })
+      }
+    }
+  }, [lastBinanceChange, lastBinanceAggChange, lastChainlinkChange, movementEvents, lastBinanceMovement, chainlinkRespondedTo])
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -347,14 +420,61 @@ export default function Home() {
     <div className="p-8 min-h-screen bg-gradient-to-br from-gray-900 via-blue-900 to-gray-900">
       <div className="mx-auto max-w-7xl">
         <h1 className="mb-2 text-4xl font-bold text-center text-white">
-          Bitcoin Price Comparison
+          Bitcoin Price Latency Arbitrage
         </h1>
         <p className="mb-2 text-center text-gray-300">
-          Server-side WebSocket connections for accurate latency measurements
+          Real-time trading signals based on Binance leading Polymarket
         </p>
         <p className="mb-8 text-sm text-center text-gray-400">
-          Deploy close to exchanges for lowest latency
+          Server-side WebSocket connections for microsecond-level accuracy
         </p>
+
+        {/* Trading Signal Alert */}
+        {tradingSignal.action !== 'NEUTRAL' && (
+          <div className={`mb-8 p-6 rounded-lg border-2 animate-pulse ${
+            tradingSignal.action === 'LONG' 
+              ? 'bg-green-900 bg-opacity-30 border-green-500' 
+              : 'bg-red-900 bg-opacity-30 border-red-500'
+          }`}>
+            <div className="flex justify-between items-center mb-3">
+              <div className="flex gap-4 items-center">
+                <span className={`text-5xl font-bold ${
+                  tradingSignal.action === 'LONG' ? 'text-green-400' : 'text-red-400'
+                }`}>
+                  {tradingSignal.action === 'LONG' ? '📈 LONG' : '📉 SHORT'}
+                </span>
+                <div>
+                  <div className="flex gap-2 items-center">
+                    <span className="text-2xl font-bold text-white">
+                      Signal Strength: {tradingSignal.strength}%
+                    </span>
+                    <div className="overflow-hidden w-32 h-3 bg-gray-700 rounded-full">
+                      <div 
+                        className={`h-full transition-all ${
+                          tradingSignal.action === 'LONG' ? 'bg-green-500' : 'bg-red-500'
+                        }`}
+                        style={{ width: `${tradingSignal.strength}%` }}
+                      />
+                    </div>
+                  </div>
+                  <p className="mt-1 text-sm text-gray-300">{tradingSignal.reason}</p>
+                </div>
+              </div>
+              <div className="text-right">
+                <p className="text-xs text-gray-400">Binance moved:</p>
+                <p className={`text-2xl font-bold ${
+                  tradingSignal.binanceChange > 0 ? 'text-green-400' : 'text-red-400'
+                }`}>
+                  {tradingSignal.binanceChange > 0 ? '+' : ''}{tradingSignal.binanceChange.toFixed(3)}%
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2 items-center text-sm text-yellow-300">
+              <span>⚠️</span>
+              <span>Polymarket hasn't reflected this move yet - potential arbitrage opportunity</span>
+            </div>
+          </div>
+        )}
 
         {/* Status Indicators */}
         <div className="grid grid-cols-1 gap-4 mb-8 md:grid-cols-4">
@@ -445,7 +565,7 @@ export default function Home() {
         </div>
 
         {/* Movement Correlation Chart */}
-        <div className="mb-8 p-6 bg-gray-800 bg-opacity-50 rounded-lg border border-purple-700 backdrop-blur-lg">
+        <div className="p-6 mb-8 bg-gray-800 bg-opacity-50 rounded-lg border border-purple-700 backdrop-blur-lg">
           <h2 className="mb-4 text-xl font-semibold text-white">
             Normalized Price Movements (% Change)
           </h2>
@@ -556,6 +676,48 @@ export default function Home() {
           </ResponsiveContainer>
         </div>
 
+        {/* Trading Signal Analysis */}
+        <div className="mt-8 bg-gray-800 bg-opacity-50 backdrop-blur-lg rounded-lg p-6 border border-purple-700">
+          <h3 className="text-lg font-semibold text-white mb-3">📊 Signal Analysis</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <h4 className="text-white font-semibold mb-2">How It Works</h4>
+              <div className="text-sm text-gray-300 space-y-2">
+                <p>📊 Tracks price movements on Binance in real-time</p>
+                <p>⏱️ Detects when Polymarket hasn't responded yet (5 second window)</p>
+                <p>📈 <span className="text-green-400">LONG signal</span> when Binance rises first</p>
+                <p>📉 <span className="text-red-400">SHORT signal</span> when Binance drops first</p>
+                <p>💪 Signal strength: 0.01% move = 10%, 0.5% move = 100%</p>
+                <p>⚡ Signal expires when Chainlink catches up or after 5 seconds</p>
+              </div>
+            </div>
+            <div>
+              <h4 className="text-white font-semibold mb-2">Recent Movements</h4>
+              <div className="space-y-1 max-h-32 overflow-y-auto">
+                {movementEvents.length > 0 ? movementEvents.slice(-10).reverse().map((event, idx) => (
+                  <div key={idx} className="text-xs flex items-center justify-between bg-gray-900 p-2 rounded">
+                    <span className={
+                      event.source === 'binance' ? 'text-blue-400' :
+                      event.source === 'binance_agg' ? 'text-cyan-400' :
+                      'text-green-400'
+                    }>
+                      {event.source === 'binance' ? '🔵' : event.source === 'binance_agg' ? '🔷' : '🟢'} {event.source}
+                    </span>
+                    <span className={event.direction === 'up' ? 'text-green-400' : 'text-red-400'}>
+                      {event.direction === 'up' ? '↑' : '↓'} {event.percentChange.toFixed(3)}%
+                    </span>
+                    <span className="text-gray-500">
+                      {Math.round((Date.now() - event.timestamp) / 1000)}s ago
+                    </span>
+                  </div>
+                )) : (
+                  <p className="text-gray-500 text-sm">Waiting for movements...</p>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* Info Section */}
         <div className="p-6 mt-8 bg-gray-800 bg-opacity-50 rounded-lg border border-gray-700 backdrop-blur-lg">
           <h3 className="mb-3 text-lg font-semibold text-white">Architecture</h3>
@@ -563,7 +725,7 @@ export default function Home() {
             <p>✅ <span className="text-blue-400">Server-side WebSocket connections</span> for accurate latency measurements</p>
             <p>✅ <span className="text-cyan-400">Server-Sent Events (SSE)</span> streams data to client</p>
             <p>✅ <span className="text-green-400">Deploy near exchanges</span> for lowest possible latency</p>
-            <p>✅ <span className="text-yellow-400">Real-time leader detection</span> shows which source is fastest</p>
+            <p>✅ <span className="text-yellow-400">Real-time arbitrage signals</span> when Binance leads Polymarket</p>
           </div>
         </div>
       </div>
